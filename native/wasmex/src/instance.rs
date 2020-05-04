@@ -4,12 +4,14 @@ use rustler::{
     resource::ResourceArc,
     types::binary::Binary,
     types::tuple::make_tuple,
+    types::ListIterator,
     {Encoder, Env as RustlerEnv, Error, MapIterator, Term},
 };
 use std::sync::Mutex;
 use std::thread;
 
 use wasmer::{Instance, Module, Store, Type, Val};
+use wasmer_wasi::WasiState;
 
 use crate::{
     atoms, environment::Environment, functions, memory::memory_from_instance,
@@ -25,7 +27,7 @@ pub struct InstanceResource {
 //
 // * bytes (binary): the bytes of the WASM module
 // * imports (map): a map defining eventual instance imports, may be empty if there are none.
-//   structure: %{namespace_name: %{import_name: {TODO: signature}}}
+//   structure: %{namespace_name: %{import_name: {:fn, param_types, result_types, captured_function}}}
 pub fn new_from_bytes<'a>(env: RustlerEnv<'a>, args: &[Term<'a>]) -> Result<Term<'a>, Error> {
     let binary: Binary = args[0].decode()?;
     let imports: MapIterator = args[1].decode()?;
@@ -33,6 +35,61 @@ pub fn new_from_bytes<'a>(env: RustlerEnv<'a>, args: &[Term<'a>]) -> Result<Term
 
     let mut environment = Environment::new();
     let import_object = environment.import_object(imports)?;
+    let store = Store::default();
+    let module = match Module::new(&store, &bytes) {
+        Ok(module) => module,
+        Err(e) => {
+            return Ok((atoms::error(), format!("Could not compule module: {:?}", e)).encode(env))
+        }
+    };
+    let instance = match Instance::new(&module, &import_object) {
+        Ok(instance) => instance,
+        Err(e) => return Ok((atoms::error(), format!("Cannot Instantiate: {:?}", e)).encode(env)),
+    };
+    let memory = memory_from_instance(&instance)?.clone();
+    environment.memory.initialize(memory);
+
+    let resource = ResourceArc::new(InstanceResource {
+        instance: Mutex::new(instance),
+    });
+    Ok((atoms::ok(), resource).encode(env))
+}
+
+// creates a new instance from the given WASM bytes
+// expects the following elixir params
+//
+// * bytes (binary): the bytes of the WASM module
+// * imports (map): a map defining eventual instance imports, may be empty if there are none.
+//   structure: %{namespace_name: %{import_name: {:fn, param_types, result_types, captured_function}}}
+// * wasi_args (list of Strings): a list of argument strings
+// * wasi_env: (list of Strings): a list of environment variable definitions, each of the type "NAME=value"
+pub fn new_wasi_from_bytes<'a>(env: RustlerEnv<'a>, args: &[Term<'a>]) -> Result<Term<'a>, Error> {
+    let binary: Binary = args[0].decode()?;
+    let imports: MapIterator = args[1].decode()?;
+    let wasi_args = args[2]
+        .decode::<ListIterator>()?
+        .map(|term: Term| term.decode::<String>().map(|s| s.into_bytes()))
+        .collect::<Result<Vec<Vec<u8>>, _>>()?;
+    let wasi_env = args[3]
+        .decode::<ListIterator>()?
+        .map(|term: Term| term.decode::<String>().map(|s| s.into_bytes()))
+        .collect::<Result<Vec<Vec<u8>>, _>>()?;
+    let bytes = binary.as_slice();
+
+    let mut environment = Environment::new();
+
+
+
+    // creates as WASI import object and merges imports from elixir into them
+    // this allows overwriting certain WASI functions from elixir
+    let mut import_object = generate_wasi_import_object(wasi_args, wasi_env, vec![], vec![]);
+    let import_object_overwrites = environment.import_object(imports)?;
+    import_object.extend(import_object_overwrites);
+
+
+
+
+
     let store = Store::default();
     let module = match Module::new(&store, &bytes) {
         Ok(module) => module,
