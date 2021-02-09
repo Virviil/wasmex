@@ -237,22 +237,36 @@ defmodule WasmexTest do
         #      42
         #    end},
         # "environ_get"
-        # clock_time_get: {:fn, [:i32, :i64, :i32], [:i32], fn context, clock_id, precision, time_ptr ->
-        #   0
-        # end}
+        clock_time_get: {:fn, [:i32, :i64, :i32], [:i32], fn %{memory: memory}, clock_id, precision, time_ptr ->
+          # 64-bit tv_sec
+          Wasmex.Memory.set(memory, time_ptr +  0, 0)
+          Wasmex.Memory.set(memory, time_ptr +  1, 0)
+          Wasmex.Memory.set(memory, time_ptr +  2, 0)
+          Wasmex.Memory.set(memory, time_ptr +  3, 0)
+          Wasmex.Memory.set(memory, time_ptr +  4, 0)
+          Wasmex.Memory.set(memory, time_ptr +  5, 0)
+          Wasmex.Memory.set(memory, time_ptr +  6, 0)
+          Wasmex.Memory.set(memory, time_ptr +  7, 0)
+
+          # 64-bit n_sec
+          Wasmex.Memory.set(memory, time_ptr +  8, 0)
+          Wasmex.Memory.set(memory, time_ptr +  9, 0)
+          Wasmex.Memory.set(memory, time_ptr + 10, 0)
+          Wasmex.Memory.set(memory, time_ptr + 11, 0)
+          Wasmex.Memory.set(memory, time_ptr + 12, 0)
+          Wasmex.Memory.set(memory, time_ptr + 13, 0)
+          Wasmex.Memory.set(memory, time_ptr + 14, 0)
+          Wasmex.Memory.set(memory, time_ptr + 15, 0)
+
+          0
+        end},
         random_get:
           {:fn, [:i32, :i32], [:i32],
            fn %{memory: memory}, address, size ->
-             bytes = :crypto.strong_rand_bytes(size)
-
-             bytes
-             |> :binary.bin_to_list()
-             |> Enum.with_index()
-             |> Enum.each(fn {byte, index} ->
-               IO.puts("setting #{byte} at #{address + index}")
-               Wasmex.Memory.set(memory, address + index, byte)
+             Enum.each(0..size, fn(index) ->
+               IO.puts("set 0 at #{address + index}")
+               Wasmex.Memory.set(memory, address + index, 0)
              end)
-
              0
            end}
         #

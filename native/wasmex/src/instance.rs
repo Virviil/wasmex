@@ -10,7 +10,7 @@ use rustler::{
 use std::sync::Mutex;
 use std::thread;
 
-use wasmer::{Instance, Module, Store, Type, Val};
+use wasmer::{ChainableNamedResolver, Instance, Module, Store, Type, Val};
 use wasmer_wasi::WasiState;
 
 use crate::{
@@ -77,27 +77,29 @@ pub fn new_wasi_from_bytes<'a>(env: RustlerEnv<'a>, args: &[Term<'a>]) -> Result
     let bytes = binary.as_slice();
 
     let mut environment = Environment::new();
+    let mut wasi_env = WasiState::new("wasmex")
+        .args(wasi_args)
+        .env("KEY", "VALUE")
+        .finalize().map_err(|e| rustler::Error::Atom("WasiStateCreationError"))?;
 
-
+        let store = Store::default();
+        let module = match Module::new(&store, &bytes) {
+            Ok(module) => module,
+            Err(e) => {
+                return Ok((atoms::error(), format!("Could not compule module: {:?}", e)).encode(env))
+            }
+        };
 
     // creates as WASI import object and merges imports from elixir into them
     // this allows overwriting certain WASI functions from elixir
-    let mut import_object = generate_wasi_import_object(wasi_args, wasi_env, vec![], vec![]);
+    let import_object = wasi_env.import_object(&module).map_err(|e| rustler::Error::Atom("could not create import object"))?;
+
+
     let import_object_overwrites = environment.import_object(imports)?;
-    import_object.extend(import_object_overwrites);
+    let resolver = import_object.chain_front(import_object_overwrites);
 
 
-
-
-
-    let store = Store::default();
-    let module = match Module::new(&store, &bytes) {
-        Ok(module) => module,
-        Err(e) => {
-            return Ok((atoms::error(), format!("Could not compule module: {:?}", e)).encode(env))
-        }
-    };
-    let instance = match Instance::new(&module, &import_object) {
+    let instance = match Instance::new(&module, &resolver) {
         Ok(instance) => instance,
         Err(e) => return Ok((atoms::error(), format!("Cannot Instantiate: {:?}", e)).encode(env)),
     };
